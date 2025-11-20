@@ -98,9 +98,9 @@ async def startup_event():
         timeout=settings.TIMEOUT
     )
 
-    download_manager = DownloadManager(config, db_manager)
-    schedule_manager = ScheduleManager(config, db_manager, download_manager)
     auth_manager = AuthManager(config)
+    download_manager = DownloadManager(config, db_manager, auth_manager)
+    schedule_manager = ScheduleManager(config, db_manager, download_manager)
     encode_manager = EncodeManager(config)
     metadata_manager = MetadataManager(config, db_manager)
 

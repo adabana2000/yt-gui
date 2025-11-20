@@ -105,22 +105,32 @@ class HistoryTab(QWidget):
 
             for row, item in enumerate(history):
                 # Title
-                self.history_table.setItem(row, 0, QTableWidgetItem(item.title or 'N/A'))
+                title_item = QTableWidgetItem(item.title or 'N/A')
+                title_item.setFlags(title_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 0, title_item)
 
                 # Channel
-                self.history_table.setItem(row, 1, QTableWidgetItem(item.channel_name or 'N/A'))
+                channel_item = QTableWidgetItem(item.channel_name or 'N/A')
+                channel_item.setFlags(channel_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 1, channel_item)
 
                 # Date
                 date_str = item.download_date.strftime('%Y-%m-%d %H:%M:%S') if item.download_date else 'N/A'
-                self.history_table.setItem(row, 2, QTableWidgetItem(date_str))
+                date_item = QTableWidgetItem(date_str)
+                date_item.setFlags(date_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 2, date_item)
 
                 # File path
-                self.history_table.setItem(row, 3, QTableWidgetItem(item.file_path or 'N/A'))
+                path_item = QTableWidgetItem(item.file_path or 'N/A')
+                path_item.setFlags(path_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 3, path_item)
 
                 # Size
                 size = item.file_size or 0
                 size_str = f"{size / 1024 / 1024:.2f} MB" if size else 'N/A'
-                self.history_table.setItem(row, 4, QTableWidgetItem(size_str))
+                size_item = QTableWidgetItem(size_str)
+                size_item.setFlags(size_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 4, size_item)
 
             # Update page label
             self.page_label.setText(f"Page {self.current_page + 1}")
@@ -152,17 +162,33 @@ class HistoryTab(QWidget):
             self.history_table.setRowCount(len(history))
 
             for row, item in enumerate(history):
-                self.history_table.setItem(row, 0, QTableWidgetItem(item.title or 'N/A'))
-                self.history_table.setItem(row, 1, QTableWidgetItem(item.channel_name or 'N/A'))
+                # Title
+                title_item = QTableWidgetItem(item.title or 'N/A')
+                title_item.setFlags(title_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 0, title_item)
 
+                # Channel
+                channel_item = QTableWidgetItem(item.channel_name or 'N/A')
+                channel_item.setFlags(channel_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 1, channel_item)
+
+                # Date
                 date_str = item.download_date.strftime('%Y-%m-%d %H:%M:%S') if item.download_date else 'N/A'
-                self.history_table.setItem(row, 2, QTableWidgetItem(date_str))
+                date_item = QTableWidgetItem(date_str)
+                date_item.setFlags(date_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 2, date_item)
 
-                self.history_table.setItem(row, 3, QTableWidgetItem(item.file_path or 'N/A'))
+                # File path
+                path_item = QTableWidgetItem(item.file_path or 'N/A')
+                path_item.setFlags(path_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 3, path_item)
 
+                # Size
                 size = item.file_size or 0
                 size_str = f"{size / 1024 / 1024:.2f} MB" if size else 'N/A'
-                self.history_table.setItem(row, 4, QTableWidgetItem(size_str))
+                size_item = QTableWidgetItem(size_str)
+                size_item.setFlags(size_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 4, size_item)
 
         except Exception as e:
             logger.error(f"Error searching history: {e}")

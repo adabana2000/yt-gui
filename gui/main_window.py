@@ -184,9 +184,9 @@ class MainWindow(QMainWindow):
             timeout=settings.TIMEOUT
         )
 
-        self.download_manager = DownloadManager(config, self.db_manager)
-        self.schedule_manager = ScheduleManager(config, self.db_manager, self.download_manager)
         self.auth_manager = AuthManager(config)
+        self.download_manager = DownloadManager(config, self.db_manager, self.auth_manager)
+        self.schedule_manager = ScheduleManager(config, self.db_manager, self.download_manager)
         self.encode_manager = EncodeManager(config)
         self.metadata_manager = MetadataManager(config, self.db_manager)
 

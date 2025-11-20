@@ -25,12 +25,14 @@ def run_cli(args):
     from core.service_manager import service_manager, ServiceConfig
     from database.db_manager import DatabaseManager
     from modules.download_manager import DownloadManager
+    from modules.auth_manager import AuthManager
 
     async def download_url(url: str):
         # Initialize
         db_manager = DatabaseManager()
         config = ServiceConfig()
-        download_manager = DownloadManager(config, db_manager)
+        auth_manager = AuthManager(config)
+        download_manager = DownloadManager(config, db_manager, auth_manager)
 
         service_manager.register_service("download", download_manager)
         await service_manager.start_all()

@@ -13,6 +13,7 @@ from core.service_manager import BaseService, ServiceConfig
 from database.db_manager import DatabaseManager
 from config.settings import settings
 from utils.logger import logger
+from modules.metadata_manager import MetadataManager
 
 
 class DownloadStatus(Enum):
@@ -78,22 +79,41 @@ class DownloadManager(BaseService):
     def __init__(
         self,
         config: ServiceConfig,
-        db_manager: DatabaseManager
+        db_manager: DatabaseManager,
+        auth_manager=None
     ):
         """Initialize download manager
 
         Args:
             config: Service configuration
             db_manager: Database manager instance
+            auth_manager: Authentication manager instance (optional)
         """
         super().__init__(config, "DownloadManager")
         self.db_manager = db_manager
+        self.metadata_manager = MetadataManager(config, db_manager)
+        self.auth_manager = auth_manager
         self.queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
         self.active_downloads: Dict[str, DownloadTask] = {}
         self.paused_downloads: Dict[str, DownloadTask] = {}
         self.executor = ThreadPoolExecutor(max_workers=config.max_workers)
         self.workers: List[asyncio.Task] = []
         self._shutdown_event = asyncio.Event()
+        self._cookie_file = None
+        self._load_browser_cookies()
+
+    def _load_browser_cookies(self):
+        """Load cookies from browser for yt-dlp"""
+        if self.auth_manager:
+            try:
+                cookie_file = self.auth_manager.get_cookies_for_ytdlp()
+                if cookie_file:
+                    self._cookie_file = cookie_file
+                    logger.info(f"Loaded browser cookies from: {cookie_file}")
+                else:
+                    logger.info("No browser cookies found, downloading may fail for age-restricted or members-only content")
+            except Exception as e:
+                logger.warning(f"Failed to load browser cookies: {e}")
 
     def _get_default_ydl_opts(self, task: DownloadTask) -> Dict[str, Any]:
         """Get default yt-dlp options
@@ -104,7 +124,21 @@ class DownloadManager(BaseService):
         Returns:
             yt-dlp options dictionary
         """
-        output_template = str(Path(task.output_path) / '%(title)s.%(ext)s')
+        # Build output template based on settings
+        base_path = Path(task.output_path)
+
+        if settings.ORGANIZE_BY_CHANNEL and settings.DIRECTORY_STRUCTURE == "channel":
+            # チャンネル別ディレクトリ: downloads/ChannelName/VideoTitle.ext
+            output_template = str(base_path / '%(uploader)s' / '%(title)s.%(ext)s')
+        elif settings.DIRECTORY_STRUCTURE == "date":
+            # 日付別ディレクトリ: downloads/2025/01/VideoTitle.ext
+            output_template = str(base_path / '%(upload_date>%Y)s' / '%(upload_date>%m)s' / '%(title)s.%(ext)s')
+        elif settings.DIRECTORY_STRUCTURE == "channel_date":
+            # チャンネル・日付別: downloads/ChannelName/2025-01/VideoTitle.ext
+            output_template = str(base_path / '%(uploader)s' / '%(upload_date>%Y-%m)s' / '%(title)s.%(ext)s')
+        else:
+            # フラット構造: downloads/VideoTitle.ext
+            output_template = str(base_path / '%(title)s.%(ext)s')
 
         # More flexible format selection
         if task.format_id:
@@ -128,11 +162,18 @@ class DownloadManager(BaseService):
             'fragment_retries': self.config.retry_count,
             'socket_timeout': self.config.timeout,
             'merge_output_format': 'mp4',  # Merge to mp4 if needed
+            'restrictfilenames': False,  # Allow Unicode characters
+            'windowsfilenames': True,  # Safe filenames for Windows
         }
 
         # Add proxy if configured
         if settings.HTTP_PROXY:
             opts['proxy'] = settings.HTTP_PROXY
+
+        # Add cookies from browser if available
+        if self._cookie_file:
+            opts['cookiefile'] = self._cookie_file
+            logger.debug(f"Using cookie file: {self._cookie_file}")
 
         return opts
 
@@ -548,9 +589,14 @@ class DownloadManager(BaseService):
         """
         logger.info(f"Fetching channel videos: {channel_url}")
 
+        # Normalize channel URL (remove /videos, /shorts, etc.)
+        import re
+        normalized_url = re.sub(r'/(videos|shorts|streams|playlists|community|about).*$', '', channel_url)
+        logger.info(f"Normalized channel URL: {normalized_url}")
+
         # Get channel videos
         opts = {
-            'extract_flat': True,
+            'extract_flat': 'in_playlist',
             'quiet': True,
             'no_warnings': True,
         }
@@ -563,7 +609,7 @@ class DownloadManager(BaseService):
                 info = await asyncio.get_event_loop().run_in_executor(
                     self.executor,
                     ydl.extract_info,
-                    channel_url,
+                    normalized_url + '/videos',  # Explicitly request videos tab
                     False
                 )
 
@@ -579,13 +625,18 @@ class DownloadManager(BaseService):
 
             # Add each video to download queue
             tasks = []
-            for entry in entries:
+            for i, entry in enumerate(entries):
                 try:
-                    # Skip if already downloaded
-                    video_url = entry.get('url') or f"https://www.youtube.com/watch?v={entry.get('id')}"
+                    # Construct proper video URL from ID
+                    video_id = entry.get('id')
+                    if not video_id:
+                        logger.warning(f"Skipping entry without ID: {entry.get('title')}")
+                        continue
+
+                    video_url = f"https://www.youtube.com/watch?v={video_id}"
 
                     if self.db_manager.check_duplicate(video_url):
-                        logger.info(f"Skipping already downloaded: {entry.get('title')}")
+                        logger.debug(f"Skipping already downloaded: {entry.get('title')}")
                         continue
 
                     task = await self.add_download(
@@ -596,6 +647,7 @@ class DownloadManager(BaseService):
                         priority=priority
                     )
                     tasks.append(task)
+                    logger.info(f"Added video {i+1}/{len(entries)}: {entry.get('title')}")
                 except ValueError as e:
                     # Skip duplicates
                     logger.debug(f"Skipping duplicate: {entry.get('title')}")
@@ -642,7 +694,7 @@ class DownloadManager(BaseService):
 
         # Get playlist videos
         opts = {
-            'extract_flat': True,
+            'extract_flat': 'in_playlist',
             'quiet': True,
             'no_warnings': True,
         }
@@ -671,13 +723,18 @@ class DownloadManager(BaseService):
 
             # Add each video to download queue
             tasks = []
-            for entry in entries:
+            for i, entry in enumerate(entries):
                 try:
-                    # Skip if already downloaded
-                    video_url = entry.get('url') or f"https://www.youtube.com/watch?v={entry.get('id')}"
+                    # Construct proper video URL from ID
+                    video_id = entry.get('id')
+                    if not video_id:
+                        logger.warning(f"Skipping entry without ID: {entry.get('title')}")
+                        continue
+
+                    video_url = f"https://www.youtube.com/watch?v={video_id}"
 
                     if self.db_manager.check_duplicate(video_url):
-                        logger.info(f"Skipping already downloaded: {entry.get('title')}")
+                        logger.debug(f"Skipping already downloaded: {entry.get('title')}")
                         continue
 
                     task = await self.add_download(
@@ -688,6 +745,7 @@ class DownloadManager(BaseService):
                         priority=priority
                     )
                     tasks.append(task)
+                    logger.info(f"Added video {i+1}/{len(entries)}: {entry.get('title')}")
                 except ValueError as e:
                     # Skip duplicates
                     logger.debug(f"Skipping duplicate: {entry.get('title')}")
