@@ -471,7 +471,18 @@ class DownloadManager(BaseService):
                 'file_path': actual_file_path,
                 'filesize': task.metadata.get('filesize') or task.metadata.get('filesize_approx') or task.total_bytes,
             })
-            self.db_manager.add_download_history(download_info)
+
+            # Log the download info before saving to database
+            logger.info(f"Saving to database - Title: {download_info.get('title')}, "
+                       f"Channel: {download_info.get('uploader')}, "
+                       f"File: {download_info.get('file_path')}, "
+                       f"Size: {download_info.get('filesize')} bytes")
+
+            try:
+                self.db_manager.add_download_history(download_info)
+                logger.info(f"Successfully saved download history to database for: {download_info.get('title')}")
+            except Exception as db_error:
+                logger.error(f"Failed to save download history to database: {db_error}", exc_info=True)
 
             # Emit completion event
             self.emit_event('download:completed', task.to_dict())
@@ -710,9 +721,9 @@ class DownloadManager(BaseService):
         """
         logger.info(f"Fetching channel content: {channel_url}")
 
-        # Normalize channel URL (remove /videos, /shorts, etc.)
+        # Normalize channel URL (remove /videos, /shorts, /featured, /posts, /playlists, etc.)
         import re
-        normalized_url = re.sub(r'/(videos|shorts|streams|playlists|community|about).*$', '', channel_url)
+        normalized_url = re.sub(r'/(videos|shorts|streams|playlists|playlist|community|about|featured|posts).*$', '', channel_url)
         logger.info(f"Normalized channel URL: {normalized_url}")
 
         # コンテンツタイプとURL

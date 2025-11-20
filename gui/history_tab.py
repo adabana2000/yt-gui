@@ -92,6 +92,7 @@ class HistoryTab(QWidget):
     def _load_history(self):
         """Load download history"""
         if not self.db_manager:
+            logger.warning("Database manager not set in history tab")
             return
 
         try:
@@ -101,6 +102,7 @@ class HistoryTab(QWidget):
                 limit=self.page_size
             )
 
+            logger.info(f"Loaded {len(history)} history records from database")
             self.history_table.setRowCount(len(history))
 
             for row, item in enumerate(history):
@@ -196,6 +198,8 @@ class HistoryTab(QWidget):
     def _load_stats(self):
         """Load statistics"""
         if not self.db_manager:
+            logger.warning("Database manager not set when loading stats")
+            self.stats_label.setText("データベースが接続されていません")
             return
 
         try:
@@ -207,16 +211,20 @@ class HistoryTab(QWidget):
 
             size_gb = total_size / 1024 / 1024 / 1024
 
-            stats_text = f"""
-            総ダウンロード数: {total}
-            総ダウンロードサイズ: {size_gb:.2f} GB
-            過去7日間: {week_count} 件
-            """
+            if total == 0:
+                stats_text = "まだダウンロード履歴がありません。動画をダウンロードすると、ここに統計が表示されます。"
+            else:
+                stats_text = f"""
+総ダウンロード数: {total}
+総ダウンロードサイズ: {size_gb:.2f} GB
+過去7日間: {week_count} 件
+                """
 
             self.stats_label.setText(stats_text)
+            logger.info(f"Stats loaded - Total: {total}, Size: {size_gb:.2f} GB, Last week: {week_count}")
 
         except Exception as e:
-            logger.error(f"Error loading stats: {e}")
+            logger.error(f"Error loading stats: {e}", exc_info=True)
             self.stats_label.setText("統計の読み込みに失敗しました")
 
     def _prev_page(self):
