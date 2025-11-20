@@ -35,6 +35,7 @@ class DownloadTask:
     output_path: str
     format_id: Optional[str] = None
     quality: Optional[str] = None
+    content_type: Optional[str] = None  # "video", "short", "stream", None
     status: DownloadStatus = DownloadStatus.PENDING
     progress: float = 0.0
     speed: float = 0.0
@@ -57,6 +58,7 @@ class DownloadTask:
             'output_path': self.output_path,
             'format_id': self.format_id,
             'quality': self.quality,
+            'content_type': self.content_type,
             'status': self.status.value,
             'progress': self.progress,
             'speed': self.speed,
@@ -127,15 +129,30 @@ class DownloadManager(BaseService):
         # Build output template based on settings
         base_path = Path(task.output_path)
 
+        # コンテンツタイプに応じたサブディレクトリ名
+        content_type_dirs = {
+            'video': '動画',
+            'short': 'ショート',
+            'stream': 'ライブ'
+        }
+
         if settings.ORGANIZE_BY_CHANNEL and settings.DIRECTORY_STRUCTURE == "channel":
-            # チャンネル別ディレクトリ: downloads/ChannelName/VideoTitle.ext
-            output_template = str(base_path / '%(uploader)s' / '%(title)s.%(ext)s')
+            # チャンネル別ディレクトリ with コンテンツタイプ
+            if task.content_type and task.content_type in content_type_dirs:
+                subdir = content_type_dirs[task.content_type]
+                output_template = str(base_path / '%(uploader)s' / subdir / '%(title)s.%(ext)s')
+            else:
+                output_template = str(base_path / '%(uploader)s' / '%(title)s.%(ext)s')
         elif settings.DIRECTORY_STRUCTURE == "date":
             # 日付別ディレクトリ: downloads/2025/01/VideoTitle.ext
             output_template = str(base_path / '%(upload_date>%Y)s' / '%(upload_date>%m)s' / '%(title)s.%(ext)s')
         elif settings.DIRECTORY_STRUCTURE == "channel_date":
             # チャンネル・日付別: downloads/ChannelName/2025-01/VideoTitle.ext
-            output_template = str(base_path / '%(uploader)s' / '%(upload_date>%Y-%m)s' / '%(title)s.%(ext)s')
+            if task.content_type and task.content_type in content_type_dirs:
+                subdir = content_type_dirs[task.content_type]
+                output_template = str(base_path / '%(uploader)s' / subdir / '%(upload_date>%Y-%m)s' / '%(title)s.%(ext)s')
+            else:
+                output_template = str(base_path / '%(uploader)s' / '%(upload_date>%Y-%m)s' / '%(title)s.%(ext)s')
         else:
             # フラット構造: downloads/VideoTitle.ext
             output_template = str(base_path / '%(title)s.%(ext)s')
@@ -264,7 +281,8 @@ class DownloadManager(BaseService):
         output_path: Optional[str] = None,
         format_id: Optional[str] = None,
         quality: Optional[str] = None,
-        priority: int = 5
+        priority: int = 5,
+        content_type: Optional[str] = None
     ) -> DownloadTask:
         """Add download to queue
 
@@ -274,6 +292,7 @@ class DownloadManager(BaseService):
             format_id: Format ID
             quality: Quality preference
             priority: Download priority (1-10, higher is more important)
+            content_type: Content type ("video", "short", "stream")
 
         Returns:
             Created download task
@@ -290,7 +309,8 @@ class DownloadManager(BaseService):
             output_path=output_path or str(settings.DOWNLOAD_DIR),
             format_id=format_id,
             quality=quality,
-            priority=priority
+            priority=priority,
+            content_type=content_type
         )
 
         # Add to database queue
@@ -397,7 +417,18 @@ class DownloadManager(BaseService):
             task.completed_at = datetime.now()
             task.progress = 100.0
 
+            # Get actual downloaded file path
+            actual_file_path = task.output_path
+            try:
+                # Reconstruct ydl options to get the actual file path
+                opts_for_path = self._get_default_ydl_opts(task)
+                with yt_dlp.YoutubeDL(opts_for_path) as ydl_path:
+                    actual_file_path = ydl_path.prepare_filename(task.metadata)
+            except Exception as e:
+                logger.warning(f"Could not determine actual file path: {e}")
+
             logger.info(f"Download completed: {task.metadata.get('title', task.url)}")
+            logger.info(f"File saved to: {actual_file_path}")
 
             # Update database
             self.db_manager.update_queue_status(
@@ -407,12 +438,13 @@ class DownloadManager(BaseService):
                 progress=100.0
             )
 
-            # Add to history
+            # Add to history with actual file path and size
             download_info = task.metadata.copy()
             download_info.update({
                 'id': task.id,
                 'url': task.url,
-                'file_path': task.output_path,
+                'file_path': actual_file_path,
+                'filesize': task.metadata.get('filesize') or task.metadata.get('filesize_approx') or task.total_bytes,
             })
             self.db_manager.add_download_history(download_info)
 
@@ -574,7 +606,7 @@ class DownloadManager(BaseService):
         priority: int = 5,
         playlist_items: Optional[str] = None
     ) -> List[DownloadTask]:
-        """Add all videos from a channel to download queue
+        """Add all videos from a channel to download queue (videos, shorts, and streams)
 
         Args:
             channel_url: Channel URL
@@ -587,14 +619,20 @@ class DownloadManager(BaseService):
         Returns:
             List of created download tasks
         """
-        logger.info(f"Fetching channel videos: {channel_url}")
+        logger.info(f"Fetching channel content: {channel_url}")
 
         # Normalize channel URL (remove /videos, /shorts, etc.)
         import re
         normalized_url = re.sub(r'/(videos|shorts|streams|playlists|community|about).*$', '', channel_url)
         logger.info(f"Normalized channel URL: {normalized_url}")
 
-        # Get channel videos
+        # コンテンツタイプとURL
+        content_types = [
+            ('video', normalized_url + '/videos', '動画'),
+            ('short', normalized_url + '/shorts', 'ショート'),
+            ('stream', normalized_url + '/streams', 'ライブ配信')
+        ]
+
         opts = {
             'extract_flat': 'in_playlist',
             'quiet': True,
@@ -604,69 +642,81 @@ class DownloadManager(BaseService):
         if playlist_items:
             opts['playlist_items'] = playlist_items
 
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = await asyncio.get_event_loop().run_in_executor(
-                    self.executor,
-                    ydl.extract_info,
-                    normalized_url + '/videos',  # Explicitly request videos tab
-                    False
-                )
+        all_tasks = []
+        channel_title = "Unknown"
 
-            if not info:
-                raise ValueError("Failed to fetch channel information")
+        for content_type, content_url, content_name in content_types:
+            try:
+                logger.info(f"Fetching {content_name} from: {content_url}")
 
-            # Get all video entries
-            entries = info.get('entries', [])
-            if not entries:
-                raise ValueError("No videos found in channel")
-
-            logger.info(f"Found {len(entries)} videos in channel: {info.get('title', 'Unknown')}")
-
-            # Add each video to download queue
-            tasks = []
-            for i, entry in enumerate(entries):
-                try:
-                    # Construct proper video URL from ID
-                    video_id = entry.get('id')
-                    if not video_id:
-                        logger.warning(f"Skipping entry without ID: {entry.get('title')}")
-                        continue
-
-                    video_url = f"https://www.youtube.com/watch?v={video_id}"
-
-                    if self.db_manager.check_duplicate(video_url):
-                        logger.debug(f"Skipping already downloaded: {entry.get('title')}")
-                        continue
-
-                    task = await self.add_download(
-                        url=video_url,
-                        output_path=output_path,
-                        format_id=format_id,
-                        quality=quality,
-                        priority=priority
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = await asyncio.get_event_loop().run_in_executor(
+                        self.executor,
+                        ydl.extract_info,
+                        content_url,
+                        False
                     )
-                    tasks.append(task)
-                    logger.info(f"Added video {i+1}/{len(entries)}: {entry.get('title')}")
-                except ValueError as e:
-                    # Skip duplicates
-                    logger.debug(f"Skipping duplicate: {entry.get('title')}")
-                except Exception as e:
-                    logger.error(f"Failed to add video {entry.get('title')}: {e}")
 
-            logger.info(f"Added {len(tasks)} videos to download queue")
-            self.emit_event('channel:added', {
-                'channel_url': channel_url,
-                'channel_title': info.get('title'),
-                'total_videos': len(entries),
-                'added_videos': len(tasks)
-            })
+                if not info:
+                    logger.warning(f"No {content_name} found")
+                    continue
 
-            return tasks
+                channel_title = info.get('title', channel_title)
+                entries = info.get('entries', [])
 
-        except Exception as e:
-            logger.error(f"Failed to add channel download: {e}")
-            raise
+                if not entries:
+                    logger.info(f"No {content_name} found in channel")
+                    continue
+
+                logger.info(f"Found {len(entries)} {content_name} in channel: {channel_title}")
+
+                # Add each video to download queue
+                for i, entry in enumerate(entries):
+                    try:
+                        # Construct proper video URL from ID
+                        video_id = entry.get('id')
+                        if not video_id:
+                            logger.warning(f"Skipping entry without ID: {entry.get('title')}")
+                            continue
+
+                        video_url = f"https://www.youtube.com/watch?v={video_id}"
+
+                        if self.db_manager.check_duplicate(video_url):
+                            logger.debug(f"Skipping already downloaded: {entry.get('title')}")
+                            continue
+
+                        task = await self.add_download(
+                            url=video_url,
+                            output_path=output_path,
+                            format_id=format_id,
+                            quality=quality,
+                            priority=priority,
+                            content_type=content_type
+                        )
+                        all_tasks.append(task)
+                        logger.info(f"Added {content_name} {i+1}/{len(entries)}: {entry.get('title')}")
+                    except ValueError as e:
+                        # Skip duplicates
+                        logger.debug(f"Skipping duplicate: {entry.get('title')}")
+                    except Exception as e:
+                        logger.error(f"Failed to add {content_name} {entry.get('title')}: {e}")
+
+            except Exception as e:
+                logger.warning(f"Failed to fetch {content_name}: {e}")
+                # Continue with next content type
+
+        if not all_tasks:
+            raise ValueError("No videos found in channel (checked videos, shorts, and streams)")
+
+        logger.info(f"Added {len(all_tasks)} items to download queue from channel")
+        self.emit_event('channel:added', {
+            'channel_url': channel_url,
+            'channel_title': channel_title,
+            'total_videos': len(all_tasks),
+            'added_videos': len(all_tasks)
+        })
+
+        return all_tasks
 
     async def add_playlist_download(
         self,
