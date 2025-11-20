@@ -740,7 +740,7 @@ class DownloadManager(BaseService):
         ]
 
         opts = {
-            'extract_flat': 'in_playlist',
+            'extract_flat': True,  # Changed from 'in_playlist' to True for better compatibility
             'quiet': True,
             'no_warnings': True,
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -765,6 +765,10 @@ class DownloadManager(BaseService):
 
         all_tasks = []
         channel_title = "Unknown"
+        total_found = 0
+        skipped_duplicate = 0
+        skipped_no_id = 0
+        skipped_error = 0
 
         # Process results from parallel fetching
         for result in results:
@@ -776,6 +780,9 @@ class DownloadManager(BaseService):
             if title != "Unknown":
                 channel_title = title
 
+            total_found += len(entries)
+            logger.info(f"Processing {len(entries)} {content_name} entries...")
+
             # Add each video to download queue
             for i, entry in enumerate(entries):
                 try:
@@ -783,12 +790,14 @@ class DownloadManager(BaseService):
                     video_id = entry.get('id')
                     if not video_id:
                         logger.warning(f"Skipping entry without ID: {entry.get('title')}")
+                        skipped_no_id += 1
                         continue
 
                     video_url = f"https://www.youtube.com/watch?v={video_id}"
 
                     if self.db_manager.check_duplicate(video_url):
                         logger.debug(f"Skipping already downloaded: {entry.get('title')}")
+                        skipped_duplicate += 1
                         continue
 
                     task = await self.add_download(
@@ -804,8 +813,17 @@ class DownloadManager(BaseService):
                 except ValueError as e:
                     # Skip duplicates
                     logger.debug(f"Skipping duplicate: {entry.get('title')}")
+                    skipped_duplicate += 1
                 except Exception as e:
                     logger.error(f"Failed to add {content_name} {entry.get('title')}: {e}")
+                    skipped_error += 1
+
+        # Log statistics
+        logger.info(f"Channel download summary: Found {total_found} videos, "
+                   f"Added {len(all_tasks)}, "
+                   f"Skipped {skipped_duplicate} duplicates, "
+                   f"{skipped_no_id} without ID, "
+                   f"{skipped_error} errors")
 
         if not all_tasks:
             raise ValueError("No videos found in channel (checked videos, shorts, and streams)")
@@ -846,7 +864,7 @@ class DownloadManager(BaseService):
 
         # Get playlist videos
         opts = {
-            'extract_flat': 'in_playlist',
+            'extract_flat': True,  # Changed from 'in_playlist' to True for better compatibility
             'quiet': True,
             'no_warnings': True,
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -881,18 +899,24 @@ class DownloadManager(BaseService):
 
             # Add each video to download queue
             tasks = []
+            skipped_duplicate = 0
+            skipped_no_id = 0
+            skipped_error = 0
+
             for i, entry in enumerate(entries):
                 try:
                     # Construct proper video URL from ID
                     video_id = entry.get('id')
                     if not video_id:
                         logger.warning(f"Skipping entry without ID: {entry.get('title')}")
+                        skipped_no_id += 1
                         continue
 
                     video_url = f"https://www.youtube.com/watch?v={video_id}"
 
                     if self.db_manager.check_duplicate(video_url):
                         logger.debug(f"Skipping already downloaded: {entry.get('title')}")
+                        skipped_duplicate += 1
                         continue
 
                     task = await self.add_download(
@@ -907,10 +931,17 @@ class DownloadManager(BaseService):
                 except ValueError as e:
                     # Skip duplicates
                     logger.debug(f"Skipping duplicate: {entry.get('title')}")
+                    skipped_duplicate += 1
                 except Exception as e:
                     logger.error(f"Failed to add video {entry.get('title')}: {e}")
+                    skipped_error += 1
 
-            logger.info(f"Added {len(tasks)} videos to download queue")
+            # Log statistics
+            logger.info(f"Playlist download summary: Found {len(entries)} videos, "
+                       f"Added {len(tasks)}, "
+                       f"Skipped {skipped_duplicate} duplicates, "
+                       f"{skipped_no_id} without ID, "
+                       f"{skipped_error} errors")
             self.emit_event('playlist:added', {
                 'playlist_url': playlist_url,
                 'playlist_title': info.get('title'),
