@@ -1,0 +1,57 @@
+# Core dependencies
+PySide6>=6.5.0
+PySide6-Addons>=6.5.0
+
+# Backend
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# Download & Media
+yt-dlp>=2023.11.0
+ffmpeg-python>=0.2.0
+
+# Database
+SQLAlchemy>=2.0.0
+alembic>=1.12.0
+
+# Async & Task Queue
+aiohttp>=3.9.0
+aiofiles>=23.2.0
+APScheduler>=3.10.0
+
+# Cache
+redis>=5.0.0
+
+# Authentication
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
+google-auth-httplib2>=0.1.1
+browser-cookie3>=0.19.0
+
+# Security
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+cryptography>=41.0.0
+
+# Data validation
+pydantic>=2.4.0
+pydantic-settings>=2.0.0
+
+# Monitoring & Logging
+prometheus-client>=0.18.0
+python-json-logger>=2.0.7
+
+# Utilities
+requests>=2.31.0
+python-dotenv>=1.0.0
+pytz>=2023.3
+
+# Development & Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+httpx>=0.25.0
+
+# WebSocket
+websockets>=12.0
