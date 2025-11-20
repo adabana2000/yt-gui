@@ -196,8 +196,16 @@ class DownloadManager(BaseService):
             'merge_output_format': 'mp4',  # Merge to mp4 if needed
             'restrictfilenames': False,  # Allow Unicode characters
             'windowsfilenames': True,  # Safe filenames for Windows
-            # Fix "not available on this app" error by using browser-like headers
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            # Fix "not available on this app" error by using Android client
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],  # Try android first, fallback to web
+                }
+            },
+            # Add sleep intervals to avoid rate limiting
+            'sleep_interval': 1,  # Sleep 1 second between downloads
+            'max_sleep_interval': 3,  # Maximum random sleep up to 3 seconds
+            'sleep_interval_requests': 1,  # Sleep 1 second between requests
         }
 
         # Add proxy if configured
@@ -635,7 +643,12 @@ class DownloadManager(BaseService):
             'quiet': True,
             'no_warnings': True,
             'extract_flat': extract_flat,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            # Use Android client to avoid "not available on this app" errors
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                }
+            },
         }
 
         # Add cookies from browser if available
@@ -743,7 +756,12 @@ class DownloadManager(BaseService):
             'extract_flat': True,  # Changed from 'in_playlist' to True for better compatibility
             'quiet': True,
             'no_warnings': True,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            # Use Android client to avoid "not available on this app" errors
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                }
+            },
         }
 
         # Add cookies from browser if available
@@ -867,7 +885,12 @@ class DownloadManager(BaseService):
             'extract_flat': True,  # Changed from 'in_playlist' to True for better compatibility
             'quiet': True,
             'no_warnings': True,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            # Use Android client to avoid "not available on this app" errors
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                }
+            },
         }
 
         # Add cookies from browser if available
