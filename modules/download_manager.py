@@ -523,3 +523,187 @@ class DownloadManager(BaseService):
             )
 
         return info
+
+    async def add_channel_download(
+        self,
+        channel_url: str,
+        output_path: Optional[str] = None,
+        format_id: Optional[str] = None,
+        quality: Optional[str] = None,
+        priority: int = 5,
+        playlist_items: Optional[str] = None
+    ) -> List[DownloadTask]:
+        """Add all videos from a channel to download queue
+
+        Args:
+            channel_url: Channel URL
+            output_path: Output directory path
+            format_id: Format ID
+            quality: Quality preference
+            priority: Download priority
+            playlist_items: Playlist items range (e.g., "1-10,15,20-25")
+
+        Returns:
+            List of created download tasks
+        """
+        logger.info(f"Fetching channel videos: {channel_url}")
+
+        # Get channel videos
+        opts = {
+            'extract_flat': True,
+            'quiet': True,
+            'no_warnings': True,
+        }
+
+        if playlist_items:
+            opts['playlist_items'] = playlist_items
+
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = await asyncio.get_event_loop().run_in_executor(
+                    self.executor,
+                    ydl.extract_info,
+                    channel_url,
+                    False
+                )
+
+            if not info:
+                raise ValueError("Failed to fetch channel information")
+
+            # Get all video entries
+            entries = info.get('entries', [])
+            if not entries:
+                raise ValueError("No videos found in channel")
+
+            logger.info(f"Found {len(entries)} videos in channel: {info.get('title', 'Unknown')}")
+
+            # Add each video to download queue
+            tasks = []
+            for entry in entries:
+                try:
+                    # Skip if already downloaded
+                    video_url = entry.get('url') or f"https://www.youtube.com/watch?v={entry.get('id')}"
+
+                    if self.db_manager.check_duplicate(video_url):
+                        logger.info(f"Skipping already downloaded: {entry.get('title')}")
+                        continue
+
+                    task = await self.add_download(
+                        url=video_url,
+                        output_path=output_path,
+                        format_id=format_id,
+                        quality=quality,
+                        priority=priority
+                    )
+                    tasks.append(task)
+                except ValueError as e:
+                    # Skip duplicates
+                    logger.debug(f"Skipping duplicate: {entry.get('title')}")
+                except Exception as e:
+                    logger.error(f"Failed to add video {entry.get('title')}: {e}")
+
+            logger.info(f"Added {len(tasks)} videos to download queue")
+            self.emit_event('channel:added', {
+                'channel_url': channel_url,
+                'channel_title': info.get('title'),
+                'total_videos': len(entries),
+                'added_videos': len(tasks)
+            })
+
+            return tasks
+
+        except Exception as e:
+            logger.error(f"Failed to add channel download: {e}")
+            raise
+
+    async def add_playlist_download(
+        self,
+        playlist_url: str,
+        output_path: Optional[str] = None,
+        format_id: Optional[str] = None,
+        quality: Optional[str] = None,
+        priority: int = 5,
+        playlist_items: Optional[str] = None
+    ) -> List[DownloadTask]:
+        """Add all videos from a playlist to download queue
+
+        Args:
+            playlist_url: Playlist URL
+            output_path: Output directory path
+            format_id: Format ID
+            quality: Quality preference
+            priority: Download priority
+            playlist_items: Playlist items range (e.g., "1-10,15,20-25")
+
+        Returns:
+            List of created download tasks
+        """
+        logger.info(f"Fetching playlist videos: {playlist_url}")
+
+        # Get playlist videos
+        opts = {
+            'extract_flat': True,
+            'quiet': True,
+            'no_warnings': True,
+        }
+
+        if playlist_items:
+            opts['playlist_items'] = playlist_items
+
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = await asyncio.get_event_loop().run_in_executor(
+                    self.executor,
+                    ydl.extract_info,
+                    playlist_url,
+                    False
+                )
+
+            if not info:
+                raise ValueError("Failed to fetch playlist information")
+
+            # Get all video entries
+            entries = info.get('entries', [])
+            if not entries:
+                raise ValueError("No videos found in playlist")
+
+            logger.info(f"Found {len(entries)} videos in playlist: {info.get('title', 'Unknown')}")
+
+            # Add each video to download queue
+            tasks = []
+            for entry in entries:
+                try:
+                    # Skip if already downloaded
+                    video_url = entry.get('url') or f"https://www.youtube.com/watch?v={entry.get('id')}"
+
+                    if self.db_manager.check_duplicate(video_url):
+                        logger.info(f"Skipping already downloaded: {entry.get('title')}")
+                        continue
+
+                    task = await self.add_download(
+                        url=video_url,
+                        output_path=output_path,
+                        format_id=format_id,
+                        quality=quality,
+                        priority=priority
+                    )
+                    tasks.append(task)
+                except ValueError as e:
+                    # Skip duplicates
+                    logger.debug(f"Skipping duplicate: {entry.get('title')}")
+                except Exception as e:
+                    logger.error(f"Failed to add video {entry.get('title')}: {e}")
+
+            logger.info(f"Added {len(tasks)} videos to download queue")
+            self.emit_event('playlist:added', {
+                'playlist_url': playlist_url,
+                'playlist_title': info.get('title'),
+                'total_videos': len(entries),
+                'added_videos': len(tasks)
+            })
+
+            return tasks
+
+        except Exception as e:
+            logger.error(f"Failed to add playlist download: {e}")
+            raise

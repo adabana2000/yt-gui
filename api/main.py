@@ -231,6 +231,52 @@ async def get_video_info(url: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/downloads/channel")
+async def add_channel_download(request: DownloadRequest):
+    """Add all videos from a channel to download queue"""
+    try:
+        tasks = await download_manager.add_channel_download(
+            channel_url=request.url,
+            output_path=request.output_path or str(settings.DOWNLOAD_DIR),
+            format_id=request.format_id,
+            quality=request.quality,
+            priority=request.priority
+        )
+        return {
+            "success": True,
+            "added_count": len(tasks),
+            "tasks": [task.to_dict() for task in tasks]
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to add channel download: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/downloads/playlist")
+async def add_playlist_download(request: DownloadRequest):
+    """Add all videos from a playlist to download queue"""
+    try:
+        tasks = await download_manager.add_playlist_download(
+            playlist_url=request.url,
+            output_path=request.output_path or str(settings.DOWNLOAD_DIR),
+            format_id=request.format_id,
+            quality=request.quality,
+            priority=request.priority
+        )
+        return {
+            "success": True,
+            "added_count": len(tasks),
+            "tasks": [task.to_dict() for task in tasks]
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to add playlist download: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ===== History Endpoints =====
 
 @app.get("/api/history", response_model=Dict[str, Any])
