@@ -204,18 +204,10 @@ class DownloadManager(BaseService):
         if settings.HTTP_PROXY:
             opts['proxy'] = settings.HTTP_PROXY
 
-        # Use cookiesfrombrowser for better compatibility (avoids cookie file parsing issues)
-        if self.auth_manager:
-            try:
-                # Try to use cookies directly from browser
-                opts['cookiesfrombrowser'] = ('chrome',)
-                logger.debug("Using cookies from Chrome browser")
-            except Exception as e:
-                logger.warning(f"Failed to use cookiesfrombrowser, falling back to cookie file: {e}")
-                # Fallback to cookie file if cookiesfrombrowser fails
-                if self._cookie_file:
-                    opts['cookiefile'] = self._cookie_file
-                    logger.debug(f"Using cookie file: {self._cookie_file}")
+        # Add cookies from browser if available (prefer cookie file for stability)
+        if self._cookie_file:
+            opts['cookiefile'] = self._cookie_file
+            logger.debug(f"Using cookie file: {self._cookie_file}")
 
         return opts
 
@@ -646,14 +638,9 @@ class DownloadManager(BaseService):
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
 
-        # Use cookiesfrombrowser for better compatibility
-        if self.auth_manager:
-            try:
-                opts['cookiesfrombrowser'] = ('chrome',)
-            except:
-                # Fallback to cookie file
-                if self._cookie_file:
-                    opts['cookiefile'] = self._cookie_file
+        # Add cookies from browser if available
+        if self._cookie_file:
+            opts['cookiefile'] = self._cookie_file
 
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = await asyncio.get_event_loop().run_in_executor(
@@ -699,21 +686,21 @@ class DownloadManager(BaseService):
                 )
 
             if not info:
-                logger.warning(f"No {content_name} found")
+                logger.warning(f"No {content_name} found - info is None")
                 return (content_type, content_name, [], "Unknown")
 
             channel_title = info.get('title', 'Unknown')
             entries = info.get('entries', [])
 
             if not entries:
-                logger.info(f"No {content_name} found in channel")
+                logger.info(f"No {content_name} found in channel (entries is empty)")
                 return (content_type, content_name, [], channel_title)
 
             logger.info(f"Found {len(entries)} {content_name} in channel: {channel_title}")
             return (content_type, content_name, entries, channel_title)
 
         except Exception as e:
-            logger.warning(f"Failed to fetch {content_name}: {e}")
+            logger.error(f"Failed to fetch {content_name}: {e}", exc_info=True)
             return (content_type, content_name, [], "Unknown")
 
     async def add_channel_download(
@@ -759,15 +746,10 @@ class DownloadManager(BaseService):
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
 
-        # Use cookiesfrombrowser for better compatibility
-        if self.auth_manager:
-            try:
-                opts['cookiesfrombrowser'] = ('chrome',)
-                logger.debug("Using cookies from Chrome for channel download")
-            except:
-                # Fallback to cookie file
-                if self._cookie_file:
-                    opts['cookiefile'] = self._cookie_file
+        # Add cookies from browser if available
+        if self._cookie_file:
+            opts['cookiefile'] = self._cookie_file
+            logger.debug(f"Using cookie file for channel download: {self._cookie_file}")
 
         if playlist_items:
             opts['playlist_items'] = playlist_items
@@ -870,13 +852,10 @@ class DownloadManager(BaseService):
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
 
-        # Use cookiesfrombrowser for better compatibility
-        if self.auth_manager:
-            try:
-                opts['cookiesfrombrowser'] = ('chrome',)
-            except:
-                if self._cookie_file:
-                    opts['cookiefile'] = self._cookie_file
+        # Add cookies from browser if available
+        if self._cookie_file:
+            opts['cookiefile'] = self._cookie_file
+            logger.debug(f"Using cookie file for playlist download: {self._cookie_file}")
 
         if playlist_items:
             opts['playlist_items'] = playlist_items
