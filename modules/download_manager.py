@@ -196,16 +196,18 @@ class DownloadManager(BaseService):
             'merge_output_format': 'mp4',  # Merge to mp4 if needed
             'restrictfilenames': False,  # Allow Unicode characters
             'windowsfilenames': True,  # Safe filenames for Windows
-            # Fix "not available on this app" error by using Android client
+            # Fix "not available on this app" error by using iOS/Android client
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'web'],  # Try android first, fallback to web
+                    'player_client': ['ios', 'android', 'web'],  # Try ios first, then android, fallback to web
+                    'player_skip': ['webpage', 'configs'],  # Skip unnecessary requests
                 }
             },
             # Add sleep intervals to avoid rate limiting
             'sleep_interval': 1,  # Sleep 1 second between downloads
-            'max_sleep_interval': 3,  # Maximum random sleep up to 3 seconds
+            'max_sleep_interval': 5,  # Maximum random sleep up to 5 seconds
             'sleep_interval_requests': 1,  # Sleep 1 second between requests
+            'sleep_interval_subtitles': 1,  # Sleep 1 second between subtitle downloads
         }
 
         # Add proxy if configured
@@ -643,10 +645,11 @@ class DownloadManager(BaseService):
             'quiet': True,
             'no_warnings': True,
             'extract_flat': extract_flat,
-            # Use Android client to avoid "not available on this app" errors
+            # Use iOS/Android client to avoid "not available on this app" errors
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'web'],
+                    'player_client': ['ios', 'android', 'web'],
+                    'player_skip': ['webpage', 'configs'],
                 }
             },
         }
@@ -756,10 +759,11 @@ class DownloadManager(BaseService):
             'extract_flat': True,  # Changed from 'in_playlist' to True for better compatibility
             'quiet': True,
             'no_warnings': True,
-            # Use Android client to avoid "not available on this app" errors
+            # Use iOS/Android client to avoid "not available on this app" errors
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'web'],
+                    'player_client': ['ios', 'android', 'web'],
+                    'player_skip': ['webpage', 'configs'],
                 }
             },
         }
@@ -885,10 +889,11 @@ class DownloadManager(BaseService):
             'extract_flat': True,  # Changed from 'in_playlist' to True for better compatibility
             'quiet': True,
             'no_warnings': True,
-            # Use Android client to avoid "not available on this app" errors
+            # Use iOS/Android client to avoid "not available on this app" errors
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'web'],
+                    'player_client': ['ios', 'android', 'web'],
+                    'player_skip': ['webpage', 'configs'],
                 }
             },
         }
