@@ -255,14 +255,28 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Handle window close event"""
-        # Stop services
-        if self.service_thread:
-            asyncio.run_coroutine_threadsafe(
-                service_manager.stop_all(),
-                self.service_thread.loop
-            )
-            self.service_thread.stop()
-            self.service_thread.wait()
+        logger.info("Closing application...")
+
+        # Stop services gracefully
+        if self.service_thread and self.service_thread.loop:
+            try:
+                # Request service manager to stop all services
+                future = asyncio.run_coroutine_threadsafe(
+                    service_manager.stop_all(),
+                    self.service_thread.loop
+                )
+
+                # Wait for services to stop (max 10 seconds)
+                future.result(timeout=10)
+                logger.info("All services stopped successfully")
+            except Exception as e:
+                logger.error(f"Error stopping services: {e}")
+            finally:
+                # Stop event loop
+                self.service_thread.stop()
+                # Wait for thread to finish (max 5 seconds)
+                if not self.service_thread.wait(5000):
+                    logger.warning("Service thread did not stop in time, forcing termination")
 
         logger.info("Application closed")
         event.accept()

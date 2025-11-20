@@ -196,16 +196,26 @@ class DownloadManager(BaseService):
             'merge_output_format': 'mp4',  # Merge to mp4 if needed
             'restrictfilenames': False,  # Allow Unicode characters
             'windowsfilenames': True,  # Safe filenames for Windows
+            # Fix "not available on this app" error by using browser-like headers
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
 
         # Add proxy if configured
         if settings.HTTP_PROXY:
             opts['proxy'] = settings.HTTP_PROXY
 
-        # Add cookies from browser if available
-        if self._cookie_file:
-            opts['cookiefile'] = self._cookie_file
-            logger.debug(f"Using cookie file: {self._cookie_file}")
+        # Use cookiesfrombrowser for better compatibility (avoids cookie file parsing issues)
+        if self.auth_manager:
+            try:
+                # Try to use cookies directly from browser
+                opts['cookiesfrombrowser'] = ('chrome',)
+                logger.debug("Using cookies from Chrome browser")
+            except Exception as e:
+                logger.warning(f"Failed to use cookiesfrombrowser, falling back to cookie file: {e}")
+                # Fallback to cookie file if cookiesfrombrowser fails
+                if self._cookie_file:
+                    opts['cookiefile'] = self._cookie_file
+                    logger.debug(f"Using cookie file: {self._cookie_file}")
 
         return opts
 
@@ -278,17 +288,20 @@ class DownloadManager(BaseService):
         self._shutdown_event.set()
 
         # Cancel all workers
+        logger.info(f"Cancelling {len(self.workers)} workers...")
         for worker in self.workers:
             worker.cancel()
 
         # Wait for workers to finish
+        logger.info("Waiting for workers to finish...")
         await asyncio.gather(*self.workers, return_exceptions=True)
         self.workers.clear()
 
         # Shutdown executor
+        logger.info("Shutting down thread pool executor...")
         self.executor.shutdown(wait=True)
 
-        logger.info("Download Manager stopped")
+        logger.info("Download Manager stopped successfully")
 
     async def add_download(
         self,
@@ -630,11 +643,17 @@ class DownloadManager(BaseService):
             'quiet': True,
             'no_warnings': True,
             'extract_flat': extract_flat,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
 
-        # Add cookies if available
-        if self._cookie_file:
-            opts['cookiefile'] = self._cookie_file
+        # Use cookiesfrombrowser for better compatibility
+        if self.auth_manager:
+            try:
+                opts['cookiesfrombrowser'] = ('chrome',)
+            except:
+                # Fallback to cookie file
+                if self._cookie_file:
+                    opts['cookiefile'] = self._cookie_file
 
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = await asyncio.get_event_loop().run_in_executor(
@@ -737,11 +756,18 @@ class DownloadManager(BaseService):
             'extract_flat': 'in_playlist',
             'quiet': True,
             'no_warnings': True,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
 
-        # Add cookies if available
-        if self._cookie_file:
-            opts['cookiefile'] = self._cookie_file
+        # Use cookiesfrombrowser for better compatibility
+        if self.auth_manager:
+            try:
+                opts['cookiesfrombrowser'] = ('chrome',)
+                logger.debug("Using cookies from Chrome for channel download")
+            except:
+                # Fallback to cookie file
+                if self._cookie_file:
+                    opts['cookiefile'] = self._cookie_file
 
         if playlist_items:
             opts['playlist_items'] = playlist_items
@@ -841,7 +867,16 @@ class DownloadManager(BaseService):
             'extract_flat': 'in_playlist',
             'quiet': True,
             'no_warnings': True,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
+
+        # Use cookiesfrombrowser for better compatibility
+        if self.auth_manager:
+            try:
+                opts['cookiesfrombrowser'] = ('chrome',)
+            except:
+                if self._cookie_file:
+                    opts['cookiefile'] = self._cookie_file
 
         if playlist_items:
             opts['playlist_items'] = playlist_items
