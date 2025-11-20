@@ -71,11 +71,17 @@ class DownloadTab(QWidget):
 
         # Buttons
         button_layout = QHBoxLayout()
-        self.add_button = QPushButton("ダウンロード追加")
+        self.add_button = QPushButton("動画ダウンロード")
         self.add_button.clicked.connect(self._add_download)
+        self.channel_button = QPushButton("チャンネル全動画")
+        self.channel_button.clicked.connect(self._add_channel_download)
+        self.playlist_button = QPushButton("プレイリスト")
+        self.playlist_button.clicked.connect(self._add_playlist_download)
         self.info_button = QPushButton("動画情報取得")
         self.info_button.clicked.connect(self._get_video_info)
         button_layout.addWidget(self.add_button)
+        button_layout.addWidget(self.channel_button)
+        button_layout.addWidget(self.playlist_button)
         button_layout.addWidget(self.info_button)
         button_layout.addStretch()
         input_layout.addLayout(button_layout)
@@ -197,6 +203,186 @@ class DownloadTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "エラー", f"動画情報の取得に失敗しました:\n{str(e)}")
             logger.error(f"Failed to get video info: {e}", exc_info=True)
+
+    def _add_channel_download(self):
+        """Add channel download to queue"""
+        url = self.url_input.text().strip()
+        if not url:
+            QMessageBox.warning(self, "エラー", "チャンネルURLを入力してください")
+            return
+
+        if not self.download_manager:
+            QMessageBox.warning(self, "エラー", "ダウンロードマネージャーが初期化されていません")
+            return
+
+        # Confirm with user
+        reply = QMessageBox.question(
+            self,
+            "確認",
+            "チャンネルの全動画をダウンロードキューに追加しますか？\n"
+            "※既にダウンロード済みの動画はスキップされます",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        quality_map = {
+            "最高品質": None,
+            "1080p": "bestvideo[height<=1080]+bestaudio/bestvideo[height<=1080]/best[height<=1080]",
+            "720p": "bestvideo[height<=720]+bestaudio/bestvideo[height<=720]/best[height<=720]",
+            "480p": "bestvideo[height<=480]+bestaudio/bestvideo[height<=480]/best[height<=480]",
+            "360p": "bestvideo[height<=360]+bestaudio/bestvideo[height<=360]/best[height<=360]",
+            "音声のみ": "bestaudio/best"
+        }
+
+        quality = self.quality_combo.currentText()
+        format_id = quality_map.get(quality)
+        priority = self.priority_spin.value()
+
+        try:
+            # Get the event loop from the parent window's service thread
+            from gui.main_window import MainWindow
+            parent = self.window()
+            if isinstance(parent, MainWindow) and parent.service_thread and parent.service_thread.loop:
+                # Show progress dialog
+                from PySide6.QtWidgets import QProgressDialog
+                progress = QProgressDialog("チャンネル動画を取得中...", "キャンセル", 0, 0, self)
+                progress.setWindowModality(Qt.WindowModality.WindowModal)
+                progress.setAutoClose(False)
+                progress.show()
+
+                # Add channel download (async) in the correct event loop
+                future = asyncio.run_coroutine_threadsafe(
+                    self.download_manager.add_channel_download(
+                        channel_url=url,
+                        format_id=format_id,
+                        priority=priority
+                    ),
+                    parent.service_thread.loop
+                )
+
+                # Wait for result (with timeout)
+                try:
+                    tasks = future.result(timeout=60)
+                    progress.close()
+
+                    if tasks:
+                        self.url_input.clear()
+                        QMessageBox.information(
+                            self,
+                            "成功",
+                            f"チャンネルから {len(tasks)} 本の動画をキューに追加しました"
+                        )
+                        logger.info(f"Added {len(tasks)} videos from channel: {url}")
+                    else:
+                        QMessageBox.information(
+                            self,
+                            "情報",
+                            "新しくダウンロードする動画がありませんでした\n（全て既にダウンロード済み）"
+                        )
+                except Exception as e:
+                    progress.close()
+                    raise e
+            else:
+                raise RuntimeError("イベントループが初期化されていません")
+
+        except ValueError as e:
+            QMessageBox.warning(self, "警告", str(e))
+            logger.warning(f"Channel download error: {url} - {e}")
+        except Exception as e:
+            QMessageBox.critical(self, "エラー", f"チャンネルダウンロードの追加に失敗しました:\n{str(e)}")
+            logger.error(f"Failed to add channel download: {e}", exc_info=True)
+
+    def _add_playlist_download(self):
+        """Add playlist download to queue"""
+        url = self.url_input.text().strip()
+        if not url:
+            QMessageBox.warning(self, "エラー", "プレイリストURLを入力してください")
+            return
+
+        if not self.download_manager:
+            QMessageBox.warning(self, "エラー", "ダウンロードマネージャーが初期化されていません")
+            return
+
+        # Confirm with user
+        reply = QMessageBox.question(
+            self,
+            "確認",
+            "プレイリストの全動画をダウンロードキューに追加しますか？\n"
+            "※既にダウンロード済みの動画はスキップされます",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        quality_map = {
+            "最高品質": None,
+            "1080p": "bestvideo[height<=1080]+bestaudio/bestvideo[height<=1080]/best[height<=1080]",
+            "720p": "bestvideo[height<=720]+bestaudio/bestvideo[height<=720]/best[height<=720]",
+            "480p": "bestvideo[height<=480]+bestaudio/bestvideo[height<=480]/best[height<=480]",
+            "360p": "bestvideo[height<=360]+bestaudio/bestvideo[height<=360]/best[height<=360]",
+            "音声のみ": "bestaudio/best"
+        }
+
+        quality = self.quality_combo.currentText()
+        format_id = quality_map.get(quality)
+        priority = self.priority_spin.value()
+
+        try:
+            # Get the event loop from the parent window's service thread
+            from gui.main_window import MainWindow
+            parent = self.window()
+            if isinstance(parent, MainWindow) and parent.service_thread and parent.service_thread.loop:
+                # Show progress dialog
+                from PySide6.QtWidgets import QProgressDialog
+                progress = QProgressDialog("プレイリスト動画を取得中...", "キャンセル", 0, 0, self)
+                progress.setWindowModality(Qt.WindowModality.WindowModal)
+                progress.setAutoClose(False)
+                progress.show()
+
+                # Add playlist download (async) in the correct event loop
+                future = asyncio.run_coroutine_threadsafe(
+                    self.download_manager.add_playlist_download(
+                        playlist_url=url,
+                        format_id=format_id,
+                        priority=priority
+                    ),
+                    parent.service_thread.loop
+                )
+
+                # Wait for result (with timeout)
+                try:
+                    tasks = future.result(timeout=60)
+                    progress.close()
+
+                    if tasks:
+                        self.url_input.clear()
+                        QMessageBox.information(
+                            self,
+                            "成功",
+                            f"プレイリストから {len(tasks)} 本の動画をキューに追加しました"
+                        )
+                        logger.info(f"Added {len(tasks)} videos from playlist: {url}")
+                    else:
+                        QMessageBox.information(
+                            self,
+                            "情報",
+                            "新しくダウンロードする動画がありませんでした\n（全て既にダウンロード済み）"
+                        )
+                except Exception as e:
+                    progress.close()
+                    raise e
+            else:
+                raise RuntimeError("イベントループが初期化されていません")
+
+        except ValueError as e:
+            QMessageBox.warning(self, "警告", str(e))
+            logger.warning(f"Playlist download error: {url} - {e}")
+        except Exception as e:
+            QMessageBox.critical(self, "エラー", f"プレイリストダウンロードの追加に失敗しました:\n{str(e)}")
+            logger.error(f"Failed to add playlist download: {e}", exc_info=True)
 
     def _update_downloads(self):
         """Update downloads table"""

@@ -92,6 +92,7 @@ class HistoryTab(QWidget):
     def _load_history(self):
         """Load download history"""
         if not self.db_manager:
+            logger.warning("Database manager not set in history tab")
             return
 
         try:
@@ -101,26 +102,37 @@ class HistoryTab(QWidget):
                 limit=self.page_size
             )
 
+            logger.info(f"Loaded {len(history)} history records from database")
             self.history_table.setRowCount(len(history))
 
             for row, item in enumerate(history):
                 # Title
-                self.history_table.setItem(row, 0, QTableWidgetItem(item.title or 'N/A'))
+                title_item = QTableWidgetItem(item.title or 'N/A')
+                title_item.setFlags(title_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 0, title_item)
 
                 # Channel
-                self.history_table.setItem(row, 1, QTableWidgetItem(item.channel_name or 'N/A'))
+                channel_item = QTableWidgetItem(item.channel_name or 'N/A')
+                channel_item.setFlags(channel_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 1, channel_item)
 
                 # Date
                 date_str = item.download_date.strftime('%Y-%m-%d %H:%M:%S') if item.download_date else 'N/A'
-                self.history_table.setItem(row, 2, QTableWidgetItem(date_str))
+                date_item = QTableWidgetItem(date_str)
+                date_item.setFlags(date_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 2, date_item)
 
                 # File path
-                self.history_table.setItem(row, 3, QTableWidgetItem(item.file_path or 'N/A'))
+                path_item = QTableWidgetItem(item.file_path or 'N/A')
+                path_item.setFlags(path_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 3, path_item)
 
                 # Size
                 size = item.file_size or 0
                 size_str = f"{size / 1024 / 1024:.2f} MB" if size else 'N/A'
-                self.history_table.setItem(row, 4, QTableWidgetItem(size_str))
+                size_item = QTableWidgetItem(size_str)
+                size_item.setFlags(size_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 4, size_item)
 
             # Update page label
             self.page_label.setText(f"Page {self.current_page + 1}")
@@ -152,17 +164,33 @@ class HistoryTab(QWidget):
             self.history_table.setRowCount(len(history))
 
             for row, item in enumerate(history):
-                self.history_table.setItem(row, 0, QTableWidgetItem(item.title or 'N/A'))
-                self.history_table.setItem(row, 1, QTableWidgetItem(item.channel_name or 'N/A'))
+                # Title
+                title_item = QTableWidgetItem(item.title or 'N/A')
+                title_item.setFlags(title_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 0, title_item)
 
+                # Channel
+                channel_item = QTableWidgetItem(item.channel_name or 'N/A')
+                channel_item.setFlags(channel_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 1, channel_item)
+
+                # Date
                 date_str = item.download_date.strftime('%Y-%m-%d %H:%M:%S') if item.download_date else 'N/A'
-                self.history_table.setItem(row, 2, QTableWidgetItem(date_str))
+                date_item = QTableWidgetItem(date_str)
+                date_item.setFlags(date_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 2, date_item)
 
-                self.history_table.setItem(row, 3, QTableWidgetItem(item.file_path or 'N/A'))
+                # File path
+                path_item = QTableWidgetItem(item.file_path or 'N/A')
+                path_item.setFlags(path_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 3, path_item)
 
+                # Size
                 size = item.file_size or 0
                 size_str = f"{size / 1024 / 1024:.2f} MB" if size else 'N/A'
-                self.history_table.setItem(row, 4, QTableWidgetItem(size_str))
+                size_item = QTableWidgetItem(size_str)
+                size_item.setFlags(size_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.history_table.setItem(row, 4, size_item)
 
         except Exception as e:
             logger.error(f"Error searching history: {e}")
@@ -170,6 +198,8 @@ class HistoryTab(QWidget):
     def _load_stats(self):
         """Load statistics"""
         if not self.db_manager:
+            logger.warning("Database manager not set when loading stats")
+            self.stats_label.setText("データベースが接続されていません")
             return
 
         try:
@@ -181,16 +211,20 @@ class HistoryTab(QWidget):
 
             size_gb = total_size / 1024 / 1024 / 1024
 
-            stats_text = f"""
-            総ダウンロード数: {total}
-            総ダウンロードサイズ: {size_gb:.2f} GB
-            過去7日間: {week_count} 件
-            """
+            if total == 0:
+                stats_text = "まだダウンロード履歴がありません。動画をダウンロードすると、ここに統計が表示されます。"
+            else:
+                stats_text = f"""
+総ダウンロード数: {total}
+総ダウンロードサイズ: {size_gb:.2f} GB
+過去7日間: {week_count} 件
+                """
 
             self.stats_label.setText(stats_text)
+            logger.info(f"Stats loaded - Total: {total}, Size: {size_gb:.2f} GB, Last week: {week_count}")
 
         except Exception as e:
-            logger.error(f"Error loading stats: {e}")
+            logger.error(f"Error loading stats: {e}", exc_info=True)
             self.stats_label.setText("統計の読み込みに失敗しました")
 
     def _prev_page(self):

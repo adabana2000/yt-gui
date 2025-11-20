@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     TIMEOUT: int = 300
     FRAGMENT_DOWNLOADS: int = 5
 
+    # Directory Organization
+    ORGANIZE_BY_CHANNEL: bool = True  # チャンネル別にディレクトリ作成
+    DIRECTORY_STRUCTURE: str = "channel"  # "channel", "date", "channel_date", "flat"
+    FILENAME_TEMPLATE: str = "{title}"  # テンプレート変数: {title}, {channel}, {id}, {date}
+
     # Schedule Settings
     ENABLE_SCHEDULER: bool = True
 
