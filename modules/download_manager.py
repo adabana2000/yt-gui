@@ -3,7 +3,7 @@ import asyncio
 from typing import List, Optional, Dict, Any, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -102,6 +102,8 @@ class DownloadManager(BaseService):
         self.workers: List[asyncio.Task] = []
         self._shutdown_event = asyncio.Event()
         self._cookie_file = None
+        self._metadata_cache: Dict[str, tuple[Dict[str, Any], datetime]] = {}
+        self._cache_duration = timedelta(minutes=10)
         self._load_browser_cookies()
 
     def _load_browser_cookies(self):
@@ -116,6 +118,19 @@ class DownloadManager(BaseService):
                     logger.info("No browser cookies found, downloading may fail for age-restricted or members-only content")
             except Exception as e:
                 logger.warning(f"Failed to load browser cookies: {e}")
+
+    def _cleanup_cache(self):
+        """Remove expired entries from metadata cache"""
+        now = datetime.now()
+        expired_keys = [
+            url for url, (_, cached_time) in self._metadata_cache.items()
+            if now - cached_time >= self._cache_duration
+        ]
+        for key in expired_keys:
+            del self._metadata_cache[key]
+
+        if expired_keys:
+            logger.debug(f"Cleaned up {len(expired_keys)} expired cache entries")
 
     def _get_default_ydl_opts(self, task: DownloadTask) -> Dict[str, Any]:
         """Get default yt-dlp options
@@ -338,6 +353,7 @@ class DownloadManager(BaseService):
             worker_id: Worker ID
         """
         logger.info(f"Worker {worker_id} started")
+        tasks_processed = 0
 
         while not self._shutdown_event.is_set():
             try:
@@ -348,6 +364,9 @@ class DownloadManager(BaseService):
                         timeout=1.0
                     )
                 except asyncio.TimeoutError:
+                    # Cleanup cache periodically when idle
+                    if tasks_processed % 10 == 0:
+                        self._cleanup_cache()
                     continue
 
                 # Process task
@@ -373,6 +392,12 @@ class DownloadManager(BaseService):
 
                 # Mark queue task as done
                 self.queue.task_done()
+
+                tasks_processed += 1
+
+                # Cleanup cache periodically (every 10 tasks)
+                if tasks_processed % 10 == 0:
+                    self._cleanup_cache()
 
             except asyncio.CancelledError:
                 logger.info(f"Worker {worker_id} cancelled")
@@ -572,20 +597,33 @@ class DownloadManager(BaseService):
 
         return None
 
-    async def get_video_info(self, url: str) -> Dict[str, Any]:
+    async def get_video_info(self, url: str, use_cache: bool = True, extract_flat: bool = False) -> Dict[str, Any]:
         """Get video information without downloading
 
         Args:
             url: Video URL
+            use_cache: Use cached metadata if available
+            extract_flat: Use fast extraction (less detailed but much faster)
 
         Returns:
             Video information dictionary
         """
+        # Check cache first
+        if use_cache and url in self._metadata_cache:
+            cached_info, cached_time = self._metadata_cache[url]
+            if datetime.now() - cached_time < self._cache_duration:
+                logger.debug(f"Using cached metadata for: {url}")
+                return cached_info
+
         opts = {
             'quiet': True,
             'no_warnings': True,
-            'extract_flat': False,
+            'extract_flat': extract_flat,
         }
+
+        # Add cookies if available
+        if self._cookie_file:
+            opts['cookiefile'] = self._cookie_file
 
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = await asyncio.get_event_loop().run_in_executor(
@@ -595,7 +633,58 @@ class DownloadManager(BaseService):
                 False
             )
 
+        # Cache the result
+        if use_cache:
+            self._metadata_cache[url] = (info, datetime.now())
+
         return info
+
+    async def _fetch_content_type(
+        self,
+        content_type: str,
+        content_url: str,
+        content_name: str,
+        opts: Dict[str, Any]
+    ) -> tuple[str, str, List[Dict[str, Any]], str]:
+        """Fetch a single content type (videos/shorts/streams) from a channel
+
+        Args:
+            content_type: Content type identifier ('video', 'short', 'stream')
+            content_url: URL to fetch content from
+            content_name: Display name for logging
+            opts: yt-dlp options
+
+        Returns:
+            Tuple of (content_type, content_name, entries, channel_title)
+        """
+        try:
+            logger.info(f"Fetching {content_name} from: {content_url}")
+
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = await asyncio.get_event_loop().run_in_executor(
+                    self.executor,
+                    ydl.extract_info,
+                    content_url,
+                    False
+                )
+
+            if not info:
+                logger.warning(f"No {content_name} found")
+                return (content_type, content_name, [], "Unknown")
+
+            channel_title = info.get('title', 'Unknown')
+            entries = info.get('entries', [])
+
+            if not entries:
+                logger.info(f"No {content_name} found in channel")
+                return (content_type, content_name, [], channel_title)
+
+            logger.info(f"Found {len(entries)} {content_name} in channel: {channel_title}")
+            return (content_type, content_name, entries, channel_title)
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch {content_name}: {e}")
+            return (content_type, content_name, [], "Unknown")
 
     async def add_channel_download(
         self,
@@ -639,71 +728,65 @@ class DownloadManager(BaseService):
             'no_warnings': True,
         }
 
+        # Add cookies if available
+        if self._cookie_file:
+            opts['cookiefile'] = self._cookie_file
+
         if playlist_items:
             opts['playlist_items'] = playlist_items
+
+        # Fetch all content types in parallel for better performance
+        logger.info("Fetching videos, shorts, and streams in parallel...")
+        fetch_tasks = [
+            self._fetch_content_type(content_type, content_url, content_name, opts)
+            for content_type, content_url, content_name in content_types
+        ]
+
+        results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
 
         all_tasks = []
         channel_title = "Unknown"
 
-        for content_type, content_url, content_name in content_types:
-            try:
-                logger.info(f"Fetching {content_name} from: {content_url}")
+        # Process results from parallel fetching
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error(f"Failed to fetch content type: {result}")
+                continue
 
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = await asyncio.get_event_loop().run_in_executor(
-                        self.executor,
-                        ydl.extract_info,
-                        content_url,
-                        False
+            content_type, content_name, entries, title = result
+            if title != "Unknown":
+                channel_title = title
+
+            # Add each video to download queue
+            for i, entry in enumerate(entries):
+                try:
+                    # Construct proper video URL from ID
+                    video_id = entry.get('id')
+                    if not video_id:
+                        logger.warning(f"Skipping entry without ID: {entry.get('title')}")
+                        continue
+
+                    video_url = f"https://www.youtube.com/watch?v={video_id}"
+
+                    if self.db_manager.check_duplicate(video_url):
+                        logger.debug(f"Skipping already downloaded: {entry.get('title')}")
+                        continue
+
+                    task = await self.add_download(
+                        url=video_url,
+                        output_path=output_path,
+                        format_id=format_id,
+                        quality=quality,
+                        priority=priority,
+                        content_type=content_type
                     )
-
-                if not info:
-                    logger.warning(f"No {content_name} found")
-                    continue
-
-                channel_title = info.get('title', channel_title)
-                entries = info.get('entries', [])
-
-                if not entries:
-                    logger.info(f"No {content_name} found in channel")
-                    continue
-
-                logger.info(f"Found {len(entries)} {content_name} in channel: {channel_title}")
-
-                # Add each video to download queue
-                for i, entry in enumerate(entries):
-                    try:
-                        # Construct proper video URL from ID
-                        video_id = entry.get('id')
-                        if not video_id:
-                            logger.warning(f"Skipping entry without ID: {entry.get('title')}")
-                            continue
-
-                        video_url = f"https://www.youtube.com/watch?v={video_id}"
-
-                        if self.db_manager.check_duplicate(video_url):
-                            logger.debug(f"Skipping already downloaded: {entry.get('title')}")
-                            continue
-
-                        task = await self.add_download(
-                            url=video_url,
-                            output_path=output_path,
-                            format_id=format_id,
-                            quality=quality,
-                            priority=priority,
-                            content_type=content_type
-                        )
-                        all_tasks.append(task)
-                        logger.info(f"Added {content_name} {i+1}/{len(entries)}: {entry.get('title')}")
-                    except ValueError as e:
-                        # Skip duplicates
-                        logger.debug(f"Skipping duplicate: {entry.get('title')}")
-                    except Exception as e:
-                        logger.error(f"Failed to add {content_name} {entry.get('title')}: {e}")
-
-            except Exception as e:
-                logger.warning(f"Failed to fetch {content_name}: {e}")
-                # Continue with next content type
+                    all_tasks.append(task)
+                    logger.debug(f"Added {content_name} {i+1}/{len(entries)}: {entry.get('title')}")
+                except ValueError as e:
+                    # Skip duplicates
+                    logger.debug(f"Skipping duplicate: {entry.get('title')}")
+                except Exception as e:
+                    logger.error(f"Failed to add {content_name} {entry.get('title')}: {e}")
 
         if not all_tasks:
             raise ValueError("No videos found in channel (checked videos, shorts, and streams)")
