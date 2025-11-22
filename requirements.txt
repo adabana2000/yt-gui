@@ -55,3 +55,6 @@ httpx>=0.25.0
 
 # WebSocket
 websockets>=12.0
+
+# Build & Packaging
+pyinstaller>=6.0.0
