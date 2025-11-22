@@ -113,11 +113,15 @@ class DownloadManager(BaseService):
                 cookie_file = self.auth_manager.get_cookies_for_ytdlp()
                 if cookie_file:
                     self._cookie_file = cookie_file
-                    logger.info(f"Loaded browser cookies from: {cookie_file}")
+                    logger.info(f"✅ Loaded browser cookies from: {cookie_file}")
                 else:
-                    logger.info("No browser cookies found, downloading may fail for age-restricted or members-only content")
+                    logger.warning("⚠️  No browser cookies found!")
+                    logger.warning("⚠️  Many videos may fail with 'not available on this app' error")
+                    logger.warning("💡 Solution: Log into YouTube in your browser (Chrome/Firefox/Edge)")
+                    logger.warning("💡 Then restart this application to load cookies automatically")
             except Exception as e:
-                logger.warning(f"Failed to load browser cookies: {e}")
+                logger.error(f"❌ Failed to load browser cookies: {e}")
+                logger.error("⚠️  Without cookies, many restricted videos will fail to download")
 
     def _cleanup_cache(self):
         """Remove expired entries from metadata cache"""
@@ -223,10 +227,20 @@ class DownloadManager(BaseService):
         if settings.HTTP_PROXY:
             opts['proxy'] = settings.HTTP_PROXY
 
-        # Add cookies from browser if available (prefer cookie file for stability)
+        # Add cookies from browser if available (CRITICAL for avoiding "not available" errors)
         if self._cookie_file:
             opts['cookiefile'] = self._cookie_file
             logger.debug(f"Using cookie file: {self._cookie_file}")
+        else:
+            # Try to reload cookies if not already loaded
+            logger.warning("⚠️  No cookies loaded, attempting to reload from browser...")
+            self._load_browser_cookies()
+            if self._cookie_file:
+                opts['cookiefile'] = self._cookie_file
+                logger.info(f"✅ Successfully loaded cookies on retry: {self._cookie_file}")
+            else:
+                logger.error("❌ Still no cookies available - downloads may fail")
+                logger.error("💡 Please ensure you are logged into YouTube in your browser")
 
         return opts
 
