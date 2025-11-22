@@ -19,6 +19,8 @@ from modules.schedule_manager import ScheduleManager
 from modules.auth_manager import AuthManager
 from modules.encode_manager import EncodeManager
 from modules.metadata_manager import MetadataManager
+from modules.notification_manager import NotificationManager
+from modules.updater_manager import UpdaterManager
 from config.settings import settings
 from utils.logger import logger
 
@@ -58,6 +60,8 @@ class MainWindow(QMainWindow):
         self.auth_manager = None
         self.encode_manager = None
         self.metadata_manager = None
+        self.notification_manager = None
+        self.updater_manager = None
 
         # Service thread
         self.service_thread = None
@@ -185,7 +189,14 @@ class MainWindow(QMainWindow):
         )
 
         self.auth_manager = AuthManager(config)
-        self.download_manager = DownloadManager(config, self.db_manager, self.auth_manager)
+        self.notification_manager = NotificationManager(config)
+        self.updater_manager = UpdaterManager(config, self.db_manager)
+        self.download_manager = DownloadManager(
+            config,
+            self.db_manager,
+            self.auth_manager,
+            self.notification_manager
+        )
         self.schedule_manager = ScheduleManager(config, self.db_manager, self.download_manager)
         self.encode_manager = EncodeManager(config)
         self.metadata_manager = MetadataManager(config, self.db_manager)
@@ -195,9 +206,11 @@ class MainWindow(QMainWindow):
         self.schedule_tab.set_managers(self.schedule_manager, self.db_manager)
         self.history_tab.set_managers(self.db_manager)
         self.settings_tab.set_managers(
-            self.auth_manager,
-            self.encode_manager,
-            self.db_manager
+            auth_manager=self.auth_manager,
+            encode_manager=self.encode_manager,
+            db_manager=self.db_manager,
+            notification_manager=self.notification_manager,
+            updater_manager=self.updater_manager
         )
 
         # Register services
@@ -206,6 +219,8 @@ class MainWindow(QMainWindow):
         service_manager.register_service("auth", self.auth_manager)
         service_manager.register_service("encode", self.encode_manager)
         service_manager.register_service("metadata", self.metadata_manager)
+        service_manager.register_service("notification", self.notification_manager)
+        service_manager.register_service("updater", self.updater_manager)
 
         # Start services
         asyncio.run_coroutine_threadsafe(
