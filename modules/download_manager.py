@@ -148,33 +148,45 @@ class DownloadManager(BaseService):
         # Build output template based on settings
         base_path = Path(task.output_path)
 
-        # コンテンツタイプに応じたサブディレクトリ名
-        content_type_dirs = {
-            'video': '動画',
-            'short': 'ショート',
-            'stream': 'ライブ'
-        }
-
-        if settings.ORGANIZE_BY_CHANNEL and settings.DIRECTORY_STRUCTURE == "channel":
-            # チャンネル別ディレクトリ with コンテンツタイプ
-            if task.content_type and task.content_type in content_type_dirs:
-                subdir = content_type_dirs[task.content_type]
-                output_template = str(base_path / '%(uploader)s' / subdir / '%(title)s.%(ext)s')
-            else:
-                output_template = str(base_path / '%(uploader)s' / '%(title)s.%(ext)s')
-        elif settings.DIRECTORY_STRUCTURE == "date":
-            # 日付別ディレクトリ: downloads/2025/01/VideoTitle.ext
-            output_template = str(base_path / '%(upload_date>%Y)s' / '%(upload_date>%m)s' / '%(title)s.%(ext)s')
-        elif settings.DIRECTORY_STRUCTURE == "channel_date":
-            # チャンネル・日付別: downloads/ChannelName/2025-01/VideoTitle.ext
-            if task.content_type and task.content_type in content_type_dirs:
-                subdir = content_type_dirs[task.content_type]
-                output_template = str(base_path / '%(uploader)s' / subdir / '%(upload_date>%Y-%m)s' / '%(title)s.%(ext)s')
-            else:
-                output_template = str(base_path / '%(uploader)s' / '%(upload_date>%Y-%m)s' / '%(title)s.%(ext)s')
+        # Check if using custom template
+        if settings.DIRECTORY_STRUCTURE == "custom":
+            # Use custom user-defined template
+            output_template = str(base_path / settings.CUSTOM_OUTPUT_TEMPLATE)
+            logger.debug(f"Using custom output template: {output_template}")
+        elif settings.DIRECTORY_STRUCTURE in settings.OUTPUT_TEMPLATE_PRESETS:
+            # Use preset template
+            preset_template = settings.OUTPUT_TEMPLATE_PRESETS[settings.DIRECTORY_STRUCTURE]
+            output_template = str(base_path / preset_template)
+            logger.debug(f"Using preset '{settings.DIRECTORY_STRUCTURE}' template: {output_template}")
         else:
-            # フラット構造: downloads/VideoTitle.ext
-            output_template = str(base_path / '%(title)s.%(ext)s')
+            # Legacy fallback for backward compatibility
+            # コンテンツタイプに応じたサブディレクトリ名
+            content_type_dirs = {
+                'video': '動画',
+                'short': 'ショート',
+                'stream': 'ライブ'
+            }
+
+            if settings.ORGANIZE_BY_CHANNEL and settings.DIRECTORY_STRUCTURE == "channel":
+                # チャンネル別ディレクトリ with コンテンツタイプ
+                if task.content_type and task.content_type in content_type_dirs:
+                    subdir = content_type_dirs[task.content_type]
+                    output_template = str(base_path / '%(uploader)s' / subdir / '%(title)s.%(ext)s')
+                else:
+                    output_template = str(base_path / '%(uploader)s' / '%(title)s.%(ext)s')
+            elif settings.DIRECTORY_STRUCTURE == "date":
+                # 日付別ディレクトリ: downloads/2025/01/VideoTitle.ext
+                output_template = str(base_path / '%(upload_date>%Y)s' / '%(upload_date>%m)s' / '%(title)s.%(ext)s')
+            elif settings.DIRECTORY_STRUCTURE == "channel_date":
+                # チャンネル・日付別: downloads/ChannelName/2025-01/VideoTitle.ext
+                if task.content_type and task.content_type in content_type_dirs:
+                    subdir = content_type_dirs[task.content_type]
+                    output_template = str(base_path / '%(uploader)s' / subdir / '%(upload_date>%Y-%m)s' / '%(title)s.%(ext)s')
+                else:
+                    output_template = str(base_path / '%(uploader)s' / '%(upload_date>%Y-%m)s' / '%(title)s.%(ext)s')
+            else:
+                # フラット構造: downloads/VideoTitle.ext
+                output_template = str(base_path / '%(title)s.%(ext)s')
 
         # More flexible format selection with comprehensive fallbacks
         if task.format_id:

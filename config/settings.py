@@ -40,8 +40,26 @@ class Settings(BaseSettings):
 
     # Directory Organization
     ORGANIZE_BY_CHANNEL: bool = True  # チャンネル別にディレクトリ作成
-    DIRECTORY_STRUCTURE: str = "channel"  # "channel", "date", "channel_date", "flat"
+    DIRECTORY_STRUCTURE: str = "channel"  # "channel", "date", "channel_date", "flat", "custom"
     FILENAME_TEMPLATE: str = "{title}"  # テンプレート変数: {title}, {channel}, {id}, {date}
+
+    # Custom Output Template (yt-dlp format)
+    # 利用可能な変数: https://github.com/yt-dlp/yt-dlp#output-template
+    # 例: "%(uploader)s/%(upload_date>%Y-%m)s/%(title)s.%(ext)s"
+    #     "%(uploader)s/[%(id)s] %(title)s.%(ext)s"
+    #     "%(upload_date>%Y)s/%(upload_date>%m)s/%(title)s [%(id)s].%(ext)s"
+    CUSTOM_OUTPUT_TEMPLATE: str = "%(uploader)s/%(title)s.%(ext)s"
+
+    # Output Template Presets
+    OUTPUT_TEMPLATE_PRESETS: dict = {
+        "channel": "%(uploader)s/%(title)s.%(ext)s",
+        "date": "%(upload_date>%Y)s/%(upload_date>%m)s/%(title)s.%(ext)s",
+        "channel_date": "%(uploader)s/%(upload_date>%Y-%m)s/%(title)s.%(ext)s",
+        "channel_type": "%(uploader)s/%(playlist_title|)s/%(title)s.%(ext)s",
+        "flat": "%(title)s.%(ext)s",
+        "detailed": "%(uploader)s/[%(id)s] %(title)s - %(upload_date>%Y%m%d)s.%(ext)s",
+        "quality": "%(uploader)s/%(resolution)s/%(title)s.%(ext)s",
+    }
 
     # Schedule Settings
     ENABLE_SCHEDULER: bool = True
