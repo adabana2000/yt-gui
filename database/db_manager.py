@@ -32,7 +32,8 @@ class DatabaseManager:
         self.SessionLocal = sessionmaker(
             autocommit=False,
             autoflush=False,
-            bind=self.engine
+            bind=self.engine,
+            expire_on_commit=False  # Prevent DetachedInstanceError when accessing objects after commit
         )
         self._create_tables()
 
