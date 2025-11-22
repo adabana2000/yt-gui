@@ -172,12 +172,12 @@ class DownloadManager(BaseService):
             # フラット構造: downloads/VideoTitle.ext
             output_template = str(base_path / '%(title)s.%(ext)s')
 
-        # More flexible format selection
+        # More flexible format selection with comprehensive fallbacks
         if task.format_id:
             format_str = task.format_id
         else:
-            # Default: best quality with fallbacks
-            format_str = 'bestvideo+bestaudio/best'
+            # Default: best quality with multiple fallbacks to ensure download succeeds
+            format_str = 'bestvideo*+bestaudio/best'
 
         opts = {
             'format': format_str,
@@ -190,16 +190,25 @@ class DownloadManager(BaseService):
             'no_warnings': not settings.DEBUG,
             'extract_flat': False,
             'ignoreerrors': False,
-            'retries': self.config.retry_count,
-            'fragment_retries': self.config.retry_count,
+            'retries': 10,  # Increase retries for better reliability
+            'fragment_retries': 10,
+            'file_access_retries': 3,
             'socket_timeout': self.config.timeout,
             'merge_output_format': 'mp4',  # Merge to mp4 if needed
             'restrictfilenames': False,  # Allow Unicode characters
             'windowsfilenames': True,  # Safe filenames for Windows
-            # Fix "not available on this app" error by using iOS/Android client
+            # Add user agent to avoid detection
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Sec-Fetch-Mode': 'navigate',
+            },
+            # Fix "not available on this app" error with comprehensive client fallback chain
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['ios', 'android', 'web'],  # Try ios first, then android, fallback to web
+                    # Try multiple clients in order for maximum compatibility
+                    'player_client': ['ios', 'mweb', 'android', 'tv_embedded'],
                     'player_skip': ['webpage', 'configs'],  # Skip unnecessary requests
                 }
             },
@@ -645,10 +654,10 @@ class DownloadManager(BaseService):
             'quiet': True,
             'no_warnings': True,
             'extract_flat': extract_flat,
-            # Use iOS/Android client to avoid "not available on this app" errors
+            # Use comprehensive client fallback to avoid "not available on this app" errors
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['ios', 'android', 'web'],
+                    'player_client': ['ios', 'mweb', 'android', 'tv_embedded'],
                     'player_skip': ['webpage', 'configs'],
                 }
             },
