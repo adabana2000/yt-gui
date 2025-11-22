@@ -111,6 +111,19 @@ class DatabaseManager:
             exists = session.query(DownloadHistory).filter_by(url=url).first() is not None
             return exists
 
+    def video_exists(self, video_id: str) -> bool:
+        """Check if video ID already exists in download history
+
+        Args:
+            video_id: Video ID (e.g., YouTube video ID)
+
+        Returns:
+            True if video already downloaded
+        """
+        with self.get_session() as session:
+            exists = session.query(DownloadHistory).filter_by(id=video_id).first() is not None
+            return exists
+
     def get_download_history(
         self,
         skip: int = 0,
