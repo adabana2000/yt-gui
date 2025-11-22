@@ -1,6 +1,6 @@
 """Download manager for handling YouTube downloads"""
 import asyncio
-from typing import List, Optional, Dict, Any, Callable
+from typing import List, Optional, Dict, Any, Callable, Set
 from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime, timedelta
@@ -8,12 +8,14 @@ from pathlib import Path
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 import yt_dlp
+import hashlib
 
 from core.service_manager import BaseService, ServiceConfig
 from database.db_manager import DatabaseManager
 from config.settings import settings
 from utils.logger import logger
 from modules.metadata_manager import MetadataManager
+from modules.notification_manager import NotificationManager
 
 
 class DownloadStatus(Enum):
@@ -82,7 +84,8 @@ class DownloadManager(BaseService):
         self,
         config: ServiceConfig,
         db_manager: DatabaseManager,
-        auth_manager=None
+        auth_manager=None,
+        notification_manager=None
     ):
         """Initialize download manager
 
@@ -90,11 +93,13 @@ class DownloadManager(BaseService):
             config: Service configuration
             db_manager: Database manager instance
             auth_manager: Authentication manager instance (optional)
+            notification_manager: Notification manager instance (optional)
         """
         super().__init__(config, "DownloadManager")
         self.db_manager = db_manager
         self.metadata_manager = MetadataManager(config, db_manager)
         self.auth_manager = auth_manager
+        self.notification_manager = notification_manager
         self.queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
         self.active_downloads: Dict[str, DownloadTask] = {}
         self.paused_downloads: Dict[str, DownloadTask] = {}
@@ -104,7 +109,9 @@ class DownloadManager(BaseService):
         self._cookie_file = None
         self._metadata_cache: Dict[str, tuple[Dict[str, Any], datetime]] = {}
         self._cache_duration = timedelta(minutes=10)
+        self._download_archive: Set[str] = set()  # Track downloaded video IDs
         self._load_browser_cookies()
+        self._load_download_archive()
 
     def _load_browser_cookies(self):
         """Load cookies from browser for yt-dlp"""
@@ -135,6 +142,82 @@ class DownloadManager(BaseService):
 
         if expired_keys:
             logger.debug(f"Cleaned up {len(expired_keys)} expired cache entries")
+
+    def _load_download_archive(self):
+        """Load download archive (list of downloaded video IDs)"""
+        if not settings.DOWNLOAD_ARCHIVE:
+            return
+
+        try:
+            archive_file = settings.ARCHIVE_FILE
+            if archive_file.exists():
+                with open(archive_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            # Format: "youtube VIDEO_ID"
+                            parts = line.split()
+                            if len(parts) >= 2:
+                                self._download_archive.add(parts[1])
+                logger.info(f"Loaded {len(self._download_archive)} entries from download archive")
+        except Exception as e:
+            logger.error(f"Failed to load download archive: {e}")
+
+    def _save_to_archive(self, video_id: str):
+        """Save video ID to download archive
+
+        Args:
+            video_id: YouTube video ID
+        """
+        if not settings.DOWNLOAD_ARCHIVE:
+            return
+
+        try:
+            self._download_archive.add(video_id)
+            archive_file = settings.ARCHIVE_FILE
+            archive_file.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(archive_file, 'a', encoding='utf-8') as f:
+                f.write(f"youtube {video_id}\n")
+
+            logger.debug(f"Added to archive: {video_id}")
+        except Exception as e:
+            logger.error(f"Failed to save to archive: {e}")
+
+    def _is_duplicate(self, video_id: str, title: str, output_path: str) -> bool:
+        """Check if video is duplicate
+
+        Args:
+            video_id: YouTube video ID
+            title: Video title
+            output_path: Output file path
+
+        Returns:
+            True if duplicate
+        """
+        if not settings.SKIP_DUPLICATES:
+            return False
+
+        # Check by video ID in archive
+        if settings.CHECK_BY_VIDEO_ID and video_id in self._download_archive:
+            logger.info(f"Skipping duplicate (archive): {video_id}")
+            return True
+
+        # Check by video ID in database
+        if settings.CHECK_BY_VIDEO_ID and self.db_manager:
+            if self.db_manager.video_exists(video_id):
+                logger.info(f"Skipping duplicate (database): {video_id}")
+                return True
+
+        # Check by filename
+        if settings.CHECK_BY_FILENAME:
+            # Check if file already exists with similar name
+            output_file = Path(output_path)
+            if output_file.exists():
+                logger.info(f"Skipping duplicate (file exists): {output_path}")
+                return True
+
+        return False
 
     def _get_default_ydl_opts(self, task: DownloadTask) -> Dict[str, Any]:
         """Get default yt-dlp options
@@ -188,12 +271,21 @@ class DownloadManager(BaseService):
                 # フラット構造: downloads/VideoTitle.ext
                 output_template = str(base_path / '%(title)s.%(ext)s')
 
-        # More flexible format selection with comprehensive fallbacks
+        # Format selection based on settings
         if task.format_id:
+            # Task-specific format override
             format_str = task.format_id
+        elif task.quality and task.quality in settings.FORMAT_PRESETS:
+            # Use quality preset
+            format_str = settings.FORMAT_PRESETS[task.quality]
+        elif settings.VIDEO_QUALITY in settings.FORMAT_PRESETS:
+            # Use settings-based quality
+            format_str = settings.FORMAT_PRESETS[settings.VIDEO_QUALITY]
         else:
-            # Default: best quality with multiple fallbacks to ensure download succeeds
+            # Default: best quality with multiple fallbacks
             format_str = 'bestvideo*+bestaudio/best'
+
+        logger.debug(f"Using format string: {format_str}")
 
         opts = {
             'format': format_str,
@@ -235,8 +327,104 @@ class DownloadManager(BaseService):
             'sleep_interval_subtitles': 1,  # Sleep 1 second between subtitle downloads
         }
 
-        # Add proxy if configured
-        if settings.HTTP_PROXY:
+        # Subtitle settings
+        if settings.DOWNLOAD_SUBTITLES:
+            opts['writesubtitles'] = True
+            opts['subtitleslangs'] = settings.SUBTITLE_LANGUAGES
+            opts['subtitlesformat'] = settings.SUBTITLE_FORMAT
+
+            if settings.DOWNLOAD_AUTO_SUBTITLES:
+                opts['writeautomaticsub'] = True
+
+            if settings.EMBED_SUBTITLES:
+                opts['embedsubtitles'] = True
+
+            if settings.CONVERT_SUBTITLES:
+                opts['convertsubtitles'] = settings.CONVERT_SUBTITLES
+
+        # Thumbnail settings
+        if settings.DOWNLOAD_THUMBNAIL:
+            opts['writethumbnail'] = True
+
+            if settings.WRITE_ALL_THUMBNAILS:
+                opts['write_all_thumbnails'] = True
+
+            if settings.EMBED_THUMBNAIL:
+                opts['embedthumbnail'] = True
+
+        # Metadata settings
+        if settings.WRITE_METADATA:
+            opts['add_metadata'] = True
+
+        if settings.WRITE_INFO_JSON:
+            opts['writeinfojson'] = True
+
+        if settings.WRITE_DESCRIPTION:
+            opts['writedescription'] = True
+
+        if settings.WRITE_ANNOTATIONS:
+            opts['writeannotations'] = True
+
+        # Download archive for duplicate checking
+        if settings.DOWNLOAD_ARCHIVE:
+            opts['download_archive'] = str(settings.ARCHIVE_FILE)
+
+        # Playlist settings
+        if settings.PLAYLIST_DOWNLOAD:
+            if settings.PLAYLIST_START:
+                opts['playliststart'] = settings.PLAYLIST_START
+            if settings.PLAYLIST_END:
+                opts['playlistend'] = settings.PLAYLIST_END
+            if settings.PLAYLIST_ITEMS:
+                opts['playlist_items'] = settings.PLAYLIST_ITEMS
+        else:
+            # Download only single video, not playlist
+            opts['noplaylist'] = True
+
+        # Date filters
+        if settings.DATE_BEFORE:
+            opts['datebefore'] = settings.DATE_BEFORE
+        if settings.DATE_AFTER:
+            opts['dateafter'] = settings.DATE_AFTER
+
+        # View count filters
+        if settings.MIN_VIEWS:
+            opts['min_views'] = settings.MIN_VIEWS
+        if settings.MAX_VIEWS:
+            opts['max_views'] = settings.MAX_VIEWS
+
+        # Duration filters
+        if settings.MIN_DURATION:
+            opts['match_filter'] = f'duration >= {settings.MIN_DURATION}'
+        if settings.MAX_DURATION:
+            if 'match_filter' in opts:
+                opts['match_filter'] += f' & duration <= {settings.MAX_DURATION}'
+            else:
+                opts['match_filter'] = f'duration <= {settings.MAX_DURATION}'
+
+        # Max downloads limit
+        if settings.MAX_DOWNLOADS:
+            opts['max_downloads'] = settings.MAX_DOWNLOADS
+
+        # Speed limiting
+        if settings.LIMIT_DOWNLOAD_SPEED and settings.MAX_DOWNLOAD_SPEED:
+            # Convert KB/s to bytes/s
+            opts['ratelimit'] = settings.MAX_DOWNLOAD_SPEED * 1024
+
+        if settings.THROTTLED_RATE:
+            opts['throttledratelimit'] = settings.THROTTLED_RATE * 1024
+
+        # Proxy settings
+        if settings.ENABLE_PROXY:
+            if settings.PROXY_TYPE == "http" and settings.HTTP_PROXY:
+                opts['proxy'] = settings.HTTP_PROXY
+            elif settings.PROXY_TYPE == "https" and settings.HTTPS_PROXY:
+                opts['proxy'] = settings.HTTPS_PROXY
+            elif settings.PROXY_TYPE == "socks5" and settings.SOCKS_PROXY:
+                opts['proxy'] = settings.SOCKS_PROXY
+
+        # Legacy proxy support
+        elif settings.HTTP_PROXY:
             opts['proxy'] = settings.HTTP_PROXY
 
         # Add cookies from browser if available (CRITICAL for avoiding "not available" errors)
@@ -534,8 +722,21 @@ class DownloadManager(BaseService):
             except Exception as db_error:
                 logger.error(f"Failed to save download history to database: {db_error}", exc_info=True)
 
+            # Save to download archive
+            if task.metadata.get('id'):
+                self._save_to_archive(task.metadata['id'])
+
             # Emit completion event
             self.emit_event('download:completed', task.to_dict())
+
+            # Send notification
+            if self.notification_manager:
+                self.notification_manager.notify_download_complete({
+                    'title': task.metadata.get('title', 'Unknown'),
+                    'uploader': task.metadata.get('uploader', 'Unknown'),
+                    'id': task.metadata.get('id'),
+                    'output_path': actual_file_path
+                })
 
         except Exception as e:
             task.status = DownloadStatus.FAILED
@@ -555,6 +756,14 @@ class DownloadManager(BaseService):
 
             # Emit failure event
             self.emit_event('download:failed', task.to_dict())
+
+            # Send error notification
+            if self.notification_manager:
+                self.notification_manager.notify_download_error({
+                    'title': task.metadata.get('title', 'Unknown') if task.metadata else task.url,
+                    'uploader': task.metadata.get('uploader', 'Unknown') if task.metadata else 'Unknown',
+                    'id': task.id,
+                }, str(e))
 
             # Retry if not exceeded
             if task.retry_count < self.config.retry_count:
